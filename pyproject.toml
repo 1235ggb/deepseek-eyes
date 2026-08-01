@@ -1,0 +1,23 @@
+[project]
+name = "deepseek-eyes"
+version = "1.0.0"
+description = "让 DeepSeek 等无视觉能力的模型，通过 MCP 服务调用视觉模型识图"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "mcp>=1.0.0",
+]
+
+[project.scripts]
+deepseek-eyes = "src.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.setuptools.package-data]
+src = ["py.typed"]
