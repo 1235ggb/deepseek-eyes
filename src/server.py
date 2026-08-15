@@ -116,7 +116,7 @@ def describe_images_in_folder(
 
 
 @server.tool(
-    description="从 Claude Code 会话记录中提取用户最近粘贴或上传的多张图片，并行识别并返回每张的描述。适用于一次粘贴/上传多张图片（剪贴板只保留最后一张，会话记录里则全部保留）、或对话里图片显示为 [Unsupported Image] 的场景。并行识别，速度较快。"
+    description="从 Claude Code 会话记录中提取用户最近一批粘贴或上传的多张图片，并行识别并返回每张的描述。适用于一次粘贴/上传多张图片（剪贴板只保留最后一张），或对话里图片显示为 [Unsupported Image] 的场景。只处理最近一条含图片的用户消息，避免混入历史图片。"
 )
 def describe_pasted_images(
     prompt: Annotated[str, Field(description="对每张图片的识图提问")] = "请详细描述这张图片的内容，尽量全面、具体，用中文回答。",

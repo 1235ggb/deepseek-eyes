@@ -12,6 +12,7 @@
 #   会话记录：扫描最新会话文件，提取用户消息里的 image 内容块。
 
 import base64
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -124,12 +125,18 @@ def _extract_image_data(d: dict) -> list[tuple[str, str]]:
 
     # --- 定位 content 列表（Claude Code 在 message.content；也兼容顶层 content）---
     content = None
+    is_claude_message = False
     if d.get("type") == "user":
         msg = d.get("message", {})
         if isinstance(msg, dict):
             content = msg.get("content")
+            is_claude_message = True
     if content is None:
         content = d.get("content")
+
+    # Claude 的 JSONL 会将同一批上传图片以界面顺序的逆序写入 content。
+    # 因此只反转 Claude 图片块；其他客户端保持其原始记录顺序。
+    source_images: list[tuple[str, str]] = []
 
     # --- 通用：content[].image.source.data ---
     if isinstance(content, list):
@@ -139,7 +146,8 @@ def _extract_image_data(d: dict) -> list[tuple[str, str]]:
             src = c.get("source", {})
             data = src.get("data", "")
             if data:
-                found.append((src.get("media_type", "image/png"), data))
+                source_images.append((src.get("media_type", "image/png"), data))
+    found.extend(reversed(source_images) if is_claude_message else source_images)
 
     # --- Codex 格式：payload.content[].image_url.url = data:...;base64,... ---
     payload = d.get("payload", d)
@@ -192,51 +200,82 @@ def _iter_json_objects(p: Path):
             continue
 
 
+def _record_timestamp(value) -> float | None:
+    """将会话记录中的 ISO 时间戳转换为可比较的秒数。"""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        # Claude/Codex 通常使用 UTC 的 ``...Z`` 格式。
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def find_pasted_images(max_count: int = 20) -> list[tuple[str, str]]:
-    """从最近的会话记录（Claude Code + Codex + Cursor）中提取用户粘贴/上传的图片。
+    """提取最近一条用户消息中的图片，避免混入历史会话图片。
 
-    返回 [(media_type, base64_data), ...]，按消息时间从新到旧。
-    同一张图按内容去重（避免跨会话重复）。
+    Claude Code 会把同一批上传的图片放在一条 ``user`` 记录的 content
+    数组中。旧实现按文件修改时间后从 JSONL 第一行读取，导致旧消息和
+    其他会话的图片被拼进当前批次。这里先按记录自身的时间戳找最新的
+    含图片消息，再只返回该消息中的图片。
     """
-    images: list[tuple[str, str]] = []
-    seen: set[str] = set()
+    latest_batch: list[tuple[str, str]] = []
+    latest_key: tuple[float, float, int] | None = None
+    cursor_images: list[tuple[float, Path]] = []
 
-    # 扫描所有会话文件（不限制前 N 个，避免漏掉早期但含图的文件），
-    # 从最新到最旧，提取到 max_count 张就停。
     for p in _session_files():
-        # --- Cursor 图片文件：直接读文件转 base64 ---
-        # （Cursor 的图片不在 json 里，而以文件存在 images/ 目录）
-        cursor_png = "workspaceStorage" in str(p)
-        if cursor_png:
+        # Cursor 图片没有会话记录，使用文件修改时间作为其时间。
+        if "workspaceStorage" in str(p):
             try:
-                with open(p, "rb") as f:
-                    raw = f.read()
-                if not raw:
-                    continue
-                b64 = base64.b64encode(raw).decode("ascii")
-                ext = p.suffix.lower().lstrip(".")
-                media_type = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}.get(ext, "image/png")
-                h = hashlib.md5(raw).hexdigest()
-                if h not in seen:
-                    seen.add(h)
-                    images.append((media_type, b64))
-                if len(images) >= max_count:
-                    return images
-                continue
+                cursor_images.append((p.stat().st_mtime, p))
             except OSError:
                 continue
+            continue
 
-        # --- json 会话文件：逐对象提取 ---
-        for d in _iter_json_objects(p):
-            for media_type, data in _extract_image_data(d):
-                if not data:
-                    continue
-                h = hashlib.md5(data.encode("utf-8")).hexdigest()
-                if h not in seen:
-                    seen.add(h)
-                    images.append((media_type, data))
-                if len(images) >= max_count:
-                    return images
+        try:
+            file_mtime = p.stat().st_mtime
+        except OSError:
+            continue
+
+        for sequence, d in enumerate(_iter_json_objects(p)):
+            extracted = [(mt, data) for mt, data in _extract_image_data(d) if data]
+            if not extracted:
+                continue
+            timestamp = _record_timestamp(d.get("timestamp")) if isinstance(d, dict) else None
+            # 没有时间戳时退回文件 mtime；sequence 保证同一时间戳下取更晚记录。
+            key = (timestamp if timestamp is not None else file_mtime, file_mtime, sequence)
+            if latest_key is None or key > latest_key:
+                latest_key = key
+                latest_batch = extracted
+
+    if cursor_images and (
+        latest_key is None or max(mtime for mtime, _ in cursor_images) > latest_key[0]
+    ):
+        # Cursor 图片没有消息时间戳；仅当其最新文件比会话消息更新时采用。
+        latest_batch = []
+        for _, p in sorted(cursor_images, reverse=True):
+            try:
+                raw = p.read_bytes()
+            except OSError:
+                continue
+            if raw:
+                ext = p.suffix.lower().lstrip(".")
+                media_type = {
+                    "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                    "webp": "image/webp", "gif": "image/gif", "bmp": "image/bmp",
+                }.get(ext, "image/png")
+                latest_batch.append((media_type, base64.b64encode(raw).decode("ascii")))
+
+    images: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for media_type, data in latest_batch:
+        h = hashlib.md5(data.encode("utf-8")).hexdigest()
+        if h in seen:
+            continue
+        seen.add(h)
+        images.append((media_type, data))
+        if len(images) >= max_count:
+            break
     return images
 
 
