@@ -72,8 +72,7 @@ PYTHONIOENCODING = "utf-8"
 | 工具 | 说明 |
 |------|------|
 | `describe_image` | 识别单张图片（本地路径 / URL / data URL）|
-| `describe_clipboard_image` | 识别剪贴板里的图片 |
-| `describe_pasted_images` | 从会话记录提取并识别多张粘贴/上传图片 |
+| `describe_pasted_images` | 从会话记录提取并识别最近一次粘贴/上传的图片（单张/多张均可） |
 | `describe_images_in_folder` | 批量识别文件夹里的图片 |
 | `get_config` / `update_config` | 查看 / 修改识图配置 |
 

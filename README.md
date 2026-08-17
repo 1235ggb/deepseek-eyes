@@ -30,9 +30,8 @@ DeepSeek: 这张图显示的是 DNS_PROBE_FINISHED_NXDOMAIN 错误页……
 
 ## ✨ 特性
 
-- 🖼️ **六个 MCP 工具**：识图、剪贴板识图、批量识图、会话图片找回、配置查看/修改
-- 📋 **剪贴板识图**：粘贴图片但客户端传不了图（显示 `[Unsupported Image]`）？直接从系统剪贴板读
-- 💾 **会话图片找回**：从 Claude Code / Codex / Cursor 的会话记录里提取你**最近一批**粘贴/上传的图片——一次贴多张也都能识别，避免混入历史图片
+- 🖼️ **五个 MCP 工具**：识图、会话图片找回、批量识图、配置查看/修改
+- 💾 **会话图片找回**：粘贴图片但客户端传不了图（显示 `[Unsupported Image]`）？从 Claude Code / Codex / Cursor 的会话记录里提取你**最近一次**粘贴/上传的图片——以真正上传到输入框的图片为准，单张、多张都能识别，不受剪贴板影响
 - 🗂️ **批量识图**：一键识别文件夹里的所有图片
 - 🔌 **多提供商**：阿里百炼 / OpenAI / OpenRouter / 智谱 / Moonshot / 硅基流动 / 自定义
 - 🚀 **快速**：并行识别 + 图片压缩 + 关闭思考模式 → 3 张图约 5 秒
@@ -175,13 +174,12 @@ PYTHONIOENCODING = "utf-8"
 | 图片在文件夹 | `describe_images_in_folder(folder="C:\\path\\folder")` |
 | 网络图片 | `describe_image(image="https://...")` |
 
-### 六个工具
+### 五个工具
 
 | 工具 | 作用 |
 |------|------|
 | `describe_image` | 识别单张图片（本地路径 / URL / data URL） |
-| `describe_clipboard_image` | 识别剪贴板里的图片（粘贴后直接识别） |
-| `describe_pasted_images` | **从会话记录提取最近一批粘贴/上传图片**并识别（多图场景首选） |
+| `describe_pasted_images` | **从会话记录提取最近一次粘贴/上传的图片**并识别（粘贴识图首选，单张/多张均可） |
 | `describe_images_in_folder` | 批量识别文件夹里的所有图片 |
 | `get_config` | 查看当前识图配置（不显示明文 Key） |
 | `update_config` | 切换提供商 / 模型 / Base URL |
@@ -237,7 +235,7 @@ DEEPSEEK_EYES_THINKING=1
 [用户] 粘贴/上传图片
    │
    ▼
-[DeepSeek Eyes MCP]  ← 从剪贴板 / 会话记录 / 路径获取图片
+[DeepSeek Eyes MCP]  ← 从会话记录 / 路径获取图片
    │
    ▼  base64 → OpenAI 兼容格式
 [视觉模型 (qwen3.7-flash)]  ← 阿里百炼等

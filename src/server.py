@@ -5,7 +5,7 @@
 #
 # 工具：
 #   describe_image              识别一张图片（本地路径 / 网络 URL / data URL）
-#   describe_clipboard_image    识别剪贴板里的图片（粘贴后直接识别）
+#   describe_pasted_images      从会话记录提取用户最近粘贴/上传的图片并识别
 #   describe_images_in_folder   批量识别一个文件夹里的多张图片
 #   get_config                  查看当前识图配置（不显示明文 Key）
 #   update_config               修改识图提供商 / 模型 / Base URL
@@ -17,13 +17,12 @@
 
 import os
 import sys
-import tempfile
 from typing import Annotated
 
 from mcp.server import MCPServer
 from pydantic import Field
 
-from . import clipboard, config, vision
+from . import config, session, vision
 
 # 注册到 MCP 服务器名（在客户端里显示为 deepseek_eyes）
 server = MCPServer("deepseek_eyes")
@@ -42,32 +41,6 @@ def describe_image(
         return vision.describe_image_file(image, prompt)
     except Exception as e:
         return f"识图失败: {e}"
-
-
-@server.tool(
-    description="识别剪贴板中的图片并返回文字描述。适用于用户粘贴图片但客户端不支持把图片传给模型（对话里显示 [Unsupported Image]）的场景——直接从系统剪贴板读取图片数据再交给视觉模型。调用前需确保用户已复制/粘贴图片。"
-)
-def describe_clipboard_image(
-    prompt: Annotated[str, Field(description="识图提问，例如『请描述图中文字』")] = "请详细描述这张图片的内容，尽量全面、具体，用中文回答。",
-) -> str:
-    """识别剪贴板中的图片。"""
-    try:
-        img = clipboard.read_clipboard_image()
-        if not img:
-            return "剪贴板中未找到图片。请先在输入框粘贴或复制一张图片，再调用本工具。"
-        ext, data = img
-        fd, path = tempfile.mkstemp(suffix=f".{ext}", prefix="deepseek_eyes_")
-        try:
-            with os.fdopen(fd, "wb") as f:
-                f.write(data)
-            return vision.describe_image_file(path, prompt)
-        finally:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-    except Exception as e:
-        return f"剪贴板识图失败: {e}"
 
 
 @server.tool(
@@ -116,7 +89,7 @@ def describe_images_in_folder(
 
 
 @server.tool(
-    description="从 Claude Code 会话记录中提取用户最近一批粘贴或上传的多张图片，并行识别并返回每张的描述。适用于一次粘贴/上传多张图片（剪贴板只保留最后一张），或对话里图片显示为 [Unsupported Image] 的场景。只处理最近一条含图片的用户消息，避免混入历史图片。"
+    description="从会话记录中提取用户最近一次粘贴或上传的图片（单张或多张均可），并行识别并返回每张的描述。适用于对话里图片显示为 [Unsupported Image] 的场景——以用户真正上传到输入框的图片为准，不受剪贴板影响。只处理最近一条含图片的用户消息，避免混入历史图片。"
 )
 def describe_pasted_images(
     prompt: Annotated[str, Field(description="对每张图片的识图提问")] = "请详细描述这张图片的内容，尽量全面、具体，用中文回答。",
@@ -124,13 +97,13 @@ def describe_pasted_images(
 ) -> str:
     """从会话记录提取并识别最近粘贴或上传的多张图片（并行）。"""
     try:
-        images = clipboard.find_pasted_images(max_count=max_count)
+        images = session.find_pasted_images(max_count=max_count)
         if not images:
             return "未在会话记录中找到粘贴/上传的图片。请先在输入框粘贴或上传图片，再调用本工具。"
 
         def _recognize(idx: int, media_type: str, b64_data: str) -> str:
             """识别单张图片，返回结果文本。"""
-            path = clipboard.pasted_image_to_temp(media_type, b64_data)
+            path = session.pasted_image_to_temp(media_type, b64_data)
             try:
                 desc = vision.describe_image_file(path, prompt)
             finally:

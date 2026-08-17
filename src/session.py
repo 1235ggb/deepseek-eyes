@@ -1,15 +1,18 @@
-# 剪贴板图片读取 & 会话粘贴图片提取
+# 会话粘贴图片提取
 #
 # 背景：很多接入 DeepSeek 的客户端不支持把粘贴的图片作为附件传给模型，
 # 模型收到的只是一个 "[Unsupported Image]" 占位符，拿不到图片。
-# 但有两种方式可以拿到图片真实数据：
-#   1. 系统剪贴板（只保留最后复制的一张）
-#   2. Claude Code 的会话记录文件（~/.claude/projects/**/*.jsonl）——
-#      粘贴/上传的图片会以 base64 完整保存，包括同一批的多张图
+# 解决方式：从客户端会话记录文件里提取用户粘贴/上传的图片——
+# 粘贴/上传的图片会以 base64 完整保存在会话记录里（包括同一批的多张图）。
 #
-# 实现：
-#   Windows 剪贴板：用 Pillow 的 ImageGrab.grabclipboard()，成熟稳定。
-#   会话记录：扫描最新会话文件，提取用户消息里的 image 内容块。
+# 说明：早期版本从系统剪贴板读图，但剪贴板里的图片会过期或被后续复制覆盖，
+# 导致「上传了图片却识别不到 / 识别到无关图片」。现在统一从会话记录获取，
+# 以用户真正上传到输入框的图片为准。
+#
+# 支持客户端：
+#   Claude Code: ~/.claude/projects/**/*.jsonl
+#   Codex CLI:   ~/.codex/sessions/**/rollout-*.jsonl
+#   Cursor:      图片存成文件在 workspaceStorage/*/images/*.png
 
 import base64
 from datetime import datetime
@@ -18,49 +21,6 @@ import json
 import os
 import tempfile
 from pathlib import Path
-
-from PIL import Image, ImageGrab
-
-
-def read_clipboard_image() -> tuple[str, bytes] | None:
-    """读取剪贴板中的图片，返回 (扩展名, 图片字节)；剪贴板没有图片返回 None。
-
-    返回的是 PNG 编码的字节（保存前统一转 PNG，透明通道也能保留）。
-    """
-    img = ImageGrab.grabclipboard()
-    if img is None:
-        return None
-    if not isinstance(img, Image.Image):
-        # 剪贴板里是文件列表 / 文本等非图片内容
-        return None
-
-    # 统一转成 PNG 字节
-    from io import BytesIO
-
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    return "png", buf.getvalue()
-
-
-def save_clipboard_image_to_temp() -> str | None:
-    """把剪贴板图片保存到临时目录，返回文件路径；剪贴板没有图片返回 None。"""
-    img = read_clipboard_image()
-    if not img:
-        return None
-    ext, data = img
-    fd, path = tempfile.mkstemp(
-        suffix=f".{ext}", prefix="deepseek_eyes_", dir=os.environ.get("TEMP")
-    )
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-        return path
-    except OSError:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-        raise
 
 
 def _session_files() -> list[Path]:
